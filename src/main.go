@@ -1,9 +1,14 @@
 package main
 
 import (
+	"archive/zip"
+	"bufio"
 	"encoding/csv"
+	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
+	"net/http"
 	"os"
 	"sort"
 	"strconv"
@@ -19,22 +24,116 @@ type Aircraft struct {
 }
 
 func main() {
-	// Replace "AircraftData.csv" with the path to your data file
-	file, err := os.Open("Aircraft.csv")
+	var matchType string
+	flag.StringVar(&matchType, "match-type", "", "NNumber to match")
+	flag.Parse()
+
+	if matchType == "" {
+		fmt.Println("Error: Please provide an NNumber using the --match-type flag")
+		return
+	}
+
+	err := downloadAndUnzip("https://registry.faa.gov/database/ReleasableAircraft.zip", "MASTER.txt")
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+
+	file, err := os.Open("MASTER.TXT")
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
 	}
 	defer file.Close()
 
-	// Replace "1234567" with the desired Aircraft Mfr Model Code
-	aircrafts := parseAircraftData(file, "06001BR")
+	modelCode, err := findModelCode(file, matchType)
+	if err != nil {
+		fmt.Println("Error:", err)
+		return
+	}
+
+	aircrafts := parseAircraftData(file, modelCode)
 	sortAircrafts(aircrafts)
 
 	fmt.Printf("%-20s %-10s %-10s %-50s %-100s\n", "Last Activity Date", "N-Number", "Year Mfr", "Registrant Info", "Address")
 	for _, aircraft := range aircrafts {
 		fmt.Printf("%-20s %-10s %-10s %-50s %-100s\n", aircraft.LastActivityDate, aircraft.NNumber, aircraft.YearMfr, aircraft.RegistrantInfo, aircraft.Address)
 	}
+	fmt.Printf("\nTotal aircraft: %d\n", len(aircrafts))
+}
+
+// Rest of the functions remain the same
+func downloadAndUnzip(url, targetFileName string) error {
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	tmpFile, err := ioutil.TempFile("", "faa_data_*.zip")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmpFile.Name())
+
+	_, err = io.Copy(tmpFile, resp.Body)
+	if err != nil {
+		return err
+	}
+
+	reader, err := zip.OpenReader(tmpFile.Name())
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+
+	for _, f := range reader.File {
+		if f.Name == targetFileName {
+			rc, err := f.Open()
+			if err != nil {
+				return err
+			}
+			defer rc.Close()
+
+			outputFile, err := os.Create(targetFileName)
+			if err != nil {
+				return err
+			}
+			defer outputFile.Close()
+
+			_, err = io.Copy(outputFile, rc)
+			if err != nil {
+				return err
+			}
+
+			return nil
+		}
+	}
+
+	return fmt.Errorf("file %s not found in the archive", targetFileName)
+}
+
+func findModelCode(file *os.File, nNumber string) (string, error) {
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		record := strings.Split(line, "|")
+
+		if len(record) < 3 {
+			continue
+		}
+
+		if record[0] == nNumber {
+			return record[2], nil
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+
+	return "", fmt.Errorf("NNumber %s not found", nNumber)
 }
 
 func parseAircraftData(file io.Reader, modelCode string) []Aircraft {
