@@ -1,4 +1,5 @@
-# FAA Aircraft Registry Search Tool
+# FAA Aircraft Registry Search Tool 
+[![Go](https://github.com/azide0x37/go_acft_registration_by_type/actions/workflows/go.yml/badge.svg?branch=main)](https://github.com/azide0x37/go_acft_registration_by_type/actions/workflows/go.yml)
 
 This command-line tool allows you to search for aircraft in the FAA Aircraft Registry database using their N-Number. The tool will download the latest available registry database, extract the relevant information, and display the results in a formatted table.
 
