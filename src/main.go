@@ -270,25 +270,50 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"sort"
-	"strconv"
 	"strings"
+
+	"github.com/jedib0t/go-pretty/v6/table"
 )
 
 type Aircraft struct {
-	LastActivityDate string
-	NNumber          string
-	YearMfr          string
-	RegistrantInfo   string
-	Address          string
+	NNumber        string
+	SerialNumber   string
+	MfrMdlCode     string
+	EngMfrMdl      string
+	YearMfr        string
+	TypeRegistrant string
+	Name           string
+	Street         string
+	Street2        string
+	City           string
+	State          string
+	ZipCode        string
+	Region         string
+	County         string
+	Country        string
+	LastActionDate string
+	CertIssueDate  string
+	Certification  string
+	TypeAircraft   string
+	TypeEngine     string
+	StatusCode     string
+	ModeSCode      string
+	FractOwner     string
+	AirWorthDate   string
+	OtherNames     [5]string
+	ExpirationDate string
+	UniqueID       string
+	KitMfr         string
+	KitModel       string
+	ModeSCodeHex   string
 }
 
 func main() {
-	matchCode := flag.String("match-code", "", "Model code to search")
+	nNumber := flag.String("n-number", "", "N-Number to search")
 	flag.Parse()
 
-	if *matchCode == "" {
-		fmt.Println("Error: Missing required flag --match-code")
+	if *nNumber == "" {
+		fmt.Println("Error: Missing required flag --n-number")
 		return
 	}
 
@@ -304,184 +329,169 @@ func main() {
 		return
 	}
 
-	// Parse the aircraft data
-	file, err := os.Open("MASTER.txt")
+	allAircrafts, err := parseCSVFile("MASTER.txt")
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
 	}
+
+	modelCode := findModelCodeByNNumber(*nNumber, allAircrafts)
+	kitMfr, kitModel := findKitInfoByNNumber(*nNumber, allAircrafts)
+
+	if modelCode == "" && (kitMfr == "" || kitModel == "") {
+		fmt.Println("No aircraft found with the provided N-Number")
+		return
+	}
+
+	var matchingAircrafts []Aircraft
+	for _, aircraft := range allAircrafts {
+		if aircraft.MfrMdlCode == modelCode || (aircraft.KitMfr == kitMfr && aircraft.KitModel == kitModel) {
+			matchingAircrafts = append(matchingAircrafts, aircraft)
+		}
+	}
+
+	t := table.NewWriter()
+	t.SetOutputMirror(os.Stdout)
+	// curvy borders
+
+	t.AppendHeader(table.Row{"N-Number", "SerialNumber", "MfrMdlCode", "EngMfrMdl", "YearMfr", "Name", "Street", "City", "State", "ZipCode", "LastActionDate", "CertIssueDate", "Certification", "ModeSCode", "FractOwner", "AirWorthDate", "ExpirationDate", "UniqueID", "KitMfr", "KitModel", "ModeSCodeHex"})
+
+	for _, aircraft := range matchingAircrafts {
+		t.AppendRow(table.Row{aircraft.NNumber, aircraft.SerialNumber, aircraft.MfrMdlCode, aircraft.EngMfrMdl, aircraft.YearMfr, aircraft.Name, aircraft.Street, aircraft.City, aircraft.State, aircraft.ZipCode, aircraft.LastActionDate, aircraft.CertIssueDate, aircraft.Certification, aircraft.ModeSCode, aircraft.FractOwner, aircraft.AirWorthDate, aircraft.ExpirationDate, aircraft.UniqueID, aircraft.KitMfr, aircraft.KitModel, aircraft.ModeSCodeHex})
+	}
+
+	t.Render()
+	fmt.Printf("Found %d matching aircrafts\n", len(matchingAircrafts))
+
+}
+
+func findModelCodeByNNumber(nNumber string, aircrafts []Aircraft) string {
+	for _, aircraft := range aircrafts {
+		if aircraft.NNumber == nNumber {
+			return aircraft.MfrMdlCode
+		}
+	}
+	return ""
+}
+
+func findKitInfoByNNumber(nNumber string, aircrafts []Aircraft) (string, string) {
+	for _, aircraft := range aircrafts {
+		if aircraft.NNumber == nNumber {
+			return aircraft.KitMfr, aircraft.KitModel
+		}
+	}
+	return "", ""
+}
+
+func parseCSVFile(filename string) ([]Aircraft, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
 	defer file.Close()
 
-	aircrafts := parseAircraftData(file, *matchCode)
-	sortAircrafts(aircrafts)
-
-	fmt.Printf("%-20s %-10s %-10s %-50s %-100s\n", "Last Activity Date", "N-Number", "Year Mfr", "Registrant Info", "Address")
-	for _, aircraft := range aircrafts {
-		fmt.Printf("%-20s %-10s %-10s %-50s %-100s\n", aircraft.LastActivityDate, aircraft.NNumber, aircraft.YearMfr, aircraft.RegistrantInfo, aircraft.Address)
-	}
-
-	fmt.Printf("Total: %d\n", len(aircrafts))
-}
-
-func parseAircraftData(file *os.File, matchCode string) []Aircraft {
 	reader := csv.NewReader(file)
-	reader.FieldsPerRecord = -1
-	reader.LazyQuotes = true
+	reader.Comma = ','
+	reader.LazyQuotes = true // Add this line to handle unescaped quotes
 
-	var manufacturerCode string
-	aircrafts := []Aircraft{}
-
-	for {
-		record, err := reader.Read()
-		if err == io.EOF {
-			break
-		}
-
-		if err != nil {
-			fmt.Println("Error:", err)
-			continue
-		}
-
-		// Check length of record to avoid index out of range error
-		if len(record) < 17 {
-			continue
-		}
-		// Check if the model code matches and set the manufacturerCode
-		if strings.TrimSpace(record[0]) == matchCode && manufacturerCode == "" {
-			manufacturerCode = strings.TrimSpace(record[2])
-			fmt.Println("Manufacturer Code:", manufacturerCode)
-		}
-	}
-
-	// Reset the reader to the beginning of the file
-	file.Seek(0, io.SeekStart)
-	reader = csv.NewReader(file)
-	reader.FieldsPerRecord = -1
-	reader.LazyQuotes = true
-
-	for {
-		record, err := reader.Read()
-		if err == io.EOF {
-			break
-		}
-
-		if err != nil {
-			fmt.Println("Error:", err)
-			continue
-		}
-
-		// Check length of record to avoid index out of range error
-		if len(record) < 17 {
-			continue
-		}
-
-		// Check if the manufacturer code matches
-		if strings.TrimSpace(record[2]) == manufacturerCode {
-			registrantInfo := record[6]
-			address := record[7] + ", " + record[9] + ", " + record[10] + " " + record[11]
-
-			aircraft := Aircraft{
-				LastActivityDate: record[25],
-				NNumber:          record[0],
-				YearMfr:          record[4],
-				RegistrantInfo:   registrantInfo,
-				Address:          address,
-			}
-			aircrafts = append(aircrafts, aircraft)
-		}
-	}
-
-	return aircrafts
-}
-
-func sortAircrafts(aircrafts []Aircraft) {
-	sort.Slice(aircrafts, func(i, j int) bool {
-		date1 := strings.Split(aircrafts[i].LastActivityDate, "/")
-		date2 := strings.Split(aircrafts[j].LastActivityDate, "/")
-
-		if len(date1) < 3 || len(date2) < 3 {
-			return false
-		}
-
-		year1, _ := strconv.Atoi(date1[0])
-		year2, _ := strconv.Atoi(date2[0])
-		month1, _ := strconv.Atoi(date1[1])
-		month2, _ := strconv.Atoi(date2[1])
-		day1, _ := strconv.Atoi(date1[2])
-		day2, _ := strconv.Atoi(date2[2])
-
-		if year1 != year2 {
-			return year1 < year2
-		}
-		if month1 != month2 {
-			return month1 < month2
-		}
-		return day1 < day2
-	})
-}
-
-func downloadFile(url, filepath string) error {
-	// Create the file
-	out, err := os.Create(filepath)
+	records, err := reader.ReadAll()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer out.Close()
 
-	// Download the data
+	var aircraftList []Aircraft
+
+	for i, record := range records {
+		if i == 0 {
+			continue // skip header
+		}
+
+		otherNames := [5]string{}
+		for j := 0; j < 5; j++ {
+			otherNames[j] = strings.TrimSpace(record[22+j])
+		}
+
+		aircraft := Aircraft{
+			NNumber:        strings.TrimSpace(record[0]),
+			SerialNumber:   strings.TrimSpace(record[1]),
+			MfrMdlCode:     strings.TrimSpace(record[2]),
+			EngMfrMdl:      strings.TrimSpace(record[3]),
+			YearMfr:        strings.TrimSpace(record[4]),
+			TypeRegistrant: strings.TrimSpace(record[5]),
+			Name:           strings.TrimSpace(record[6]),
+			Street:         strings.TrimSpace(record[7]),
+			Street2:        strings.TrimSpace(record[8]),
+			City:           strings.TrimSpace(record[9]),
+			State:          strings.TrimSpace(record[10]),
+			ZipCode:        strings.TrimSpace(record[11]),
+			Region:         strings.TrimSpace(record[12]),
+			County:         strings.TrimSpace(record[13]),
+			Country:        strings.TrimSpace(record[14]),
+			LastActionDate: strings.TrimSpace(record[15]),
+			CertIssueDate:  strings.TrimSpace(record[16]),
+			Certification:  strings.TrimSpace(record[17]),
+			TypeAircraft:   strings.TrimSpace(record[18]),
+			TypeEngine:     strings.TrimSpace(record[19]),
+			StatusCode:     strings.TrimSpace(record[20]),
+			ModeSCode:      strings.TrimSpace(record[21]),
+			FractOwner:     strings.TrimSpace(record[22]),
+			AirWorthDate:   strings.TrimSpace(record[23]),
+			OtherNames:     otherNames,
+			ExpirationDate: strings.TrimSpace(record[27]),
+			UniqueID:       strings.TrimSpace(record[28]),
+			KitMfr:         strings.TrimSpace(record[29]),
+			KitModel:       strings.TrimSpace(record[30]),
+			ModeSCodeHex:   strings.TrimSpace(record[31]),
+		}
+
+		aircraftList = append(aircraftList, aircraft)
+	}
+
+	return aircraftList, nil
+}
+
+func downloadFile(url string, filepath string) error {
 	resp, err := http.Get(url)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
-	// Write the body to file
-	_, err = io.Copy(out, resp.Body)
+	out, err := os.Create(filepath)
 	if err != nil {
 		return err
 	}
+	defer out.Close()
 
-	return nil
+	_, err = io.Copy(out, resp.Body)
+	return err
 }
 
-func unzipFile(zipfile, targetfile string) error {
-	// Open the zip file
-	r, err := zip.OpenReader(zipfile)
+func unzipFile(zipfile string, outfile string) error {
+	reader, err := zip.OpenReader(zipfile)
 	if err != nil {
 		return err
 	}
-	defer r.Close()
+	defer reader.Close()
 
-	// Loop through the files in the zip file
-	for _, f := range r.File {
-		// Only extract the target file
-		if f.Name != targetfile {
-			continue
-		}
+	for _, file := range reader.File {
+		if file.Name == outfile {
+			rc, err := file.Open()
+			if err != nil {
+				return err
+			}
+			defer rc.Close()
 
-		// Open the file from the zip archive
-		rc, err := f.Open()
-		if err != nil {
+			out, err := os.Create(outfile)
+			if err != nil {
+				return err
+			}
+			defer out.Close()
+
+			_, err = io.Copy(out, rc)
 			return err
 		}
-		defer rc.Close()
-
-		// Create the target file
-		target, err := os.Create(targetfile)
-		if err != nil {
-			return err
-		}
-		defer target.Close()
-
-		// Write the file to disk
-		_, err = io.Copy(target, rc)
-		if err != nil {
-			return err
-		}
-
-		// Exit the loop after finding the target file
-		break
 	}
 
-	return nil
+	return fmt.Errorf("file %s not found in zip file %s", outfile, zipfile)
 }
